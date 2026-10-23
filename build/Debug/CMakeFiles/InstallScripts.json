@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"C:/Dev_Tools/Projects/Stm32_Black_TFT/Stm32_Black_TFT/build/Debug/cmake_install.cmake",
-		"C:/Dev_Tools/Projects/Stm32_Black_TFT/Stm32_Black_TFT/build/Debug/cmake/stm32cubemx/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
