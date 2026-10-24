@@ -26,6 +26,7 @@
 #define FLASH_W25QXX_BLOCK_SIZE                          65536
 #define FLASH_W25QXX_FLASH_SIZE                          2097152
 #define FLASH_W25QXX_FLASH_SIZE_KB                       2048
+#define FLASH_W25QXX_FLASH_SIZE_MB                       2
 #define FLASH_W25QXX_START_ADDRESS                       0x000000
 #define FLASH_W25QXX_END_ADDRESS                         0x1FFFFF
 #define FLASH_STATE_IDLE                                 0
@@ -83,41 +84,99 @@
 
 /* Structures -----------------------------------------------------------------*/
 
+typedef enum {
+    E_OK = 0,
+    E_NOT_OK = 1,   
+} STD_ReturnTypeDef;
+
+typedef enum {
+    FLS_UNINITIALIZED = 0,
+    FLS_IDLE          = 1,
+    FLS_BUSY          = 2,
+} FLS_StatusTypeDef;
+
+typedef enum {
+    FLS_JOB_OK      = 0,
+    FLS_JOB_FAILED  = 1,
+    FLS_JOB_PENDING = 2,
+} FLS_JobStatusTypeDef;
+
+typedef enum {
+    NORMAL_MODE = 0,
+    QUAD_MODE   = 1,
+} FLS_ModeTypeDef;
+
+typedef struct {
+    uint32_t FlashSize;                    // Size of the flash memory in bytes
+    uint32_t PageSize;                     // Size of a page in bytes
+    uint32_t SectorSize;                   // Size of a sector in bytes
+    uint32_t BlockSize;                    // Size of a block in bytes
+    uint32_t StartAddress;                 // Start address of the flash memory
+    uint32_t EndAddress;                   // End address of the flash memory
+    FLS_StatusTypeDef  State;              // Current state of the flash memory (idle, busy, etc.)
+    FLS_JobStatusTypeDef  JobStatus;       // Status of the last job (ok, failed, pending)
+    FLS_ModeTypeDef  Mode;                 // Current mode of the flash memory (normal, high performance, etc.)
+    //uint8_t  JEDEC_ID[3];                // JEDEC ID of the flash memory
+    struct {
+        uint8_t  ManufacturerID;           // Manufacturer ID of the flash memory
+        uint16_t MemoryType;               // Memory type of the flash memory
+        uint8_t  Capacity;                 // Capacity of the flash memory
+    } FlashInfo;
+} Fls_ConfigTypeDef;
+
+
+typedef struct {
+    uint8_t  vendorID;           // Vendor ID of the flash memory
+    uint16_t moduleID;           // Module ID of the flash memory
+    uint16_t module_Size;        // Module size of the flash memory in KB
+    uint8_t  sw_major_version;   // Software major version
+    uint8_t  sw_minor_version;   // Software minor version
+    uint8_t  sw_patch_version;   // Software patch version
+} Fls_VersionInfoTypeDef;
 
 /* Functions -----------------------------------------------------------------*/
-void flash_wq25xx_init(void);
-void flash_wq25xx_deinit(void);
-void flash_wq25xx_setMode(uint8_t mode);
-void flash_wq25xx_Cancel_Job(void);
-void flash_wq25xx_Control_Power(bool enable);
+STD_ReturnTypeDef fls_Init(void);
+STD_ReturnTypeDef fls_setMode(uint8_t mode);
+ STD_ReturnTypeDef fls_Erase_Sector(uint32_t address);
+ STD_ReturnTypeDef fls_Erase_Chip(void);
+ STD_ReturnTypeDef fls_Erase_Suspend(void);
+ STD_ReturnTypeDef fls_Erase_Resume(void);
+ STD_ReturnTypeDef fls_PowerDown(void);
+ STD_ReturnTypeDef fls_ReleasePowerDown(void);
+ STD_ReturnTypeDef fls_Cancel_Job(void);
+FLS_StatusTypeDef fls_GetStatus(void);
+FLS_JobStatusTypeDef fls_GetJobResult(void);
+STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo);
 
-uint8_t flash_wq25xx_get_status(void);
-uint8_t flash_wq25xx_get_Job_Result(void);
+STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length);
+STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length);
+STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length);
+STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length);
+STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length);
+
+ STD_ReturnTypeDef fls_Erase_Sector(uint32_t address);
+ STD_ReturnTypeDef fls_Erase_Chip(void);
+ STD_ReturnTypeDef fls_Erase_Suspend(void);
+ STD_ReturnTypeDef fls_Erase_Resume(void);
+ STD_ReturnTypeDef fls_PowerDown(void);
+ STD_ReturnTypeDef fls_ReleasePowerDown(void);
+ STD_ReturnTypeDef fls_wq25xx_Read_JEDEC_ID(void); 
+ STD_ReturnTypeDef fls_wq25xx_Read_Status_Register1(void);
+ STD_ReturnTypeDef fls_wq25xx_Read_Status_Register2(void);
+ STD_ReturnTypeDef fls_wq25xx_Write_Status_Register(uint8_t reg1, uint8_t reg2);
+ STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address);
+ STD_ReturnTypeDef fls_wq25xx_Write_Enable(void);
+ STD_ReturnTypeDef fls_wq25xx_Write_Disable(void);
+ STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t length);
+ STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_t length);
+ STD_ReturnTypeDef fls_wq25xx_Read_Unique_ID(uint8_t *unique_id);
+void fls_SPI_TransmitCompleteCallback(void);
+void fls_SPI_ReceiveCompleteCallback(void);
+STD_ReturnTypeDef fls_SetNormalMode(void);
 
 
-
-
-void flash_wq25xx_write_enable(void);
-void flash_wq25xx_write_disable(void);
-void flash_wq25xx_sector_erase(uint32_t address);
-void flash_wq25xx_chip_erase(void);
-void flash_wq25xx_erase_suspend(void);
-void flash_wq25xx_erase_resume(void);
-void flash_wq25xx_power_down(void);
-void flash_wq25xx_high_performance_mode(void);
-void flash_wq25xx_mode_bit_reset(void);
-void flash_wq25xx_release_power_down(void);
-uint8_t flash_wq25xx_read_manufacturer_id(void);
-uint8_t flash_wq25xx_read_jedec_id(void);
-void flash_wq25xx_read_unique_id(uint8_t *id);
-void flash_wq25xx_read_data(uint32_t address, uint8_t *data, uint16_t length);
-void flash_wq25xx_fast_read(uint32_t address, uint8_t *data, uint16_t length);
-void flash_wq25xx_fast_read_dual_output(uint32_t address, uint8_t *data, uint16_t length);
-void flash_wq25xx_read_dual_io(uint32_t address, uint8_t *data, uint16_t length);
-void flash_wq25xx_fast_read_quad_output(uint32_t address, uint8_t *data, uint16_t length);
-void flash_wq25xx_read_quad_io(uint32_t address, uint8_t *data, uint16_t length);
-
-
+STD_ReturnTypeDef fls_SetQuadMode(void);
+STD_ReturnTypeDef fls_wq25xx_Is_Writable(void);
 
 
 #endif // /*__FLASH_WQ25XX_H */

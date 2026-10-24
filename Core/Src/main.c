@@ -124,10 +124,12 @@ int main(void)
   MX_SPI2_Init();
   MX_USB_OTG_FS_HCD_Init();
   MX_SPI1_Init();
+
   /* USER CODE BEGIN 2 */
+  fls_Init();
   AppInit();
 
-  flash_wq25xx_release_power_down();
+  
 
   /* USER CODE END 2 */
 
@@ -488,6 +490,40 @@ static void MX_FSMC_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  /* Prevent unused argument(s) compilation warning */
+  if (hspi->Instance == SPI1)
+  {
+    /* code */
+    fls_SPI_TransmitCompleteCallback();
+  }
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_SPI_TxCpltCallback should be implemented in the user file
+   */
+}
+
+/**
+  * @brief  Rx Transfer completed callback.
+  * @param  hspi pointer to a SPI_HandleTypeDef structure that contains
+  *               the configuration information for SPI module.
+  * @retval None
+  */
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+  /* Prevent unused argument(s) compilation warning */
+  if (hspi->Instance == SPI1)
+  {
+    /* code */
+    fls_SPI_ReceiveCompleteCallback();
+  }
+
+  /* NOTE : This function should not be modified, when the callback is needed,
+            the HAL_SPI_RxCpltCallback should be implemented in the user file
+   */
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -518,14 +554,17 @@ void StartDefaultTask(void *argument)
 void StartBlinkTask(void *argument)
 {
   /* USER CODE BEGIN StartBlinkTask */
-  uint8_t manufacturer_id = 0;
-  uint8_t jedec_id = 0;
+  uint8_t read_buffer[13] = {0};
+
+  uint8_t data_to_write[13] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
   /* Infinite loop */
   for(;;)
   {
-    manufacturer_id = flash_wq25xx_read_manufacturer_id();
+
+    fls_Write(0x000200, (uint8_t *)data_to_write, 13);
     osDelay(50);
-    jedec_id = flash_wq25xx_read_jedec_id();
+    fls_Read(0x000200, (uint8_t *)read_buffer, 13);
+    osDelay(50);
     LedToggle(LED2);
 	  osDelay(50);
 	  LedToggle(LED2);
