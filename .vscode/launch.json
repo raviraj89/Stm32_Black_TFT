@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Cortex Debug",
+            "name": "Debug with OpenOCD",
             "cwd": "${workspaceFolder}",
             "executable": "./build/Debug/Stm32_Black_TFT.elf",
             "request": "launch",
@@ -14,8 +14,8 @@
             "servertype": "openocd",
             "device": "STM32F407VET6",
             "configFiles": [
-                "interface/stlink-v2.cfg",
-                "target/STM32F4x.cfg"
+                "/usr/share/openocd/scripts/interface/stlink.cfg",
+                "/usr/share/openocd/scripts/target/stm32f4x.cfg"
             ]
         }
 

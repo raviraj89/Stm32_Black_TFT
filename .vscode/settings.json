@@ -1,0 +1,7 @@
+{
+    
+    "cortex-debug.gdbPath": "/usr/bin/gdb-multiarch",
+    "cortex-debug.openocdPath": "/usr/bin/openocd",
+    "cortex-debug.variableUseNaturalFormat": false,
+    
+}

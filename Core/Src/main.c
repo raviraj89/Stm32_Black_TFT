@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "board.h"
 #include "app.hpp"
+#include "flash_wq25xx.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -125,6 +126,9 @@ int main(void)
   MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   AppInit();
+
+  flash_wq25xx_release_power_down();
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -199,10 +203,10 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 168;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 288;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
-  RCC_OscInitStruct.PLL.PLLQ = 7;
+  RCC_OscInitStruct.PLL.PLLQ = 6;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -217,7 +221,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -281,7 +285,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_2;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -414,7 +418,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = FLASH_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(FLASH_CS_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : LCD_BL_Pin */
@@ -514,9 +518,14 @@ void StartDefaultTask(void *argument)
 void StartBlinkTask(void *argument)
 {
   /* USER CODE BEGIN StartBlinkTask */
+  uint8_t manufacturer_id = 0;
+  uint8_t jedec_id = 0;
   /* Infinite loop */
   for(;;)
   {
+    manufacturer_id = flash_wq25xx_read_manufacturer_id();
+    osDelay(50);
+    jedec_id = flash_wq25xx_read_jedec_id();
     LedToggle(LED2);
 	  osDelay(50);
 	  LedToggle(LED2);
