@@ -1,31 +1,81 @@
 /**
  ******************************************************************************
- * File Name		: flash_wq25xx.c
- * Description		: This file provides code for the SPI based flash driver
+ * File Name        : flash_wq25xx.c
+ * Description      : Blocking SPI driver for 2 MiB W25Q16 serial flash
  ******************************************************************************
  */
-/* Includes ------------------------------------------------------------------*/
 #include "flash_wq25xx.h"
-#include "stm32f4xx_hal.h"
-#include "stm32f4xx_hal_spi.h"
 #include "main.h"
 
-
-
-/* Global Variables ----------------------------------------------------------*/
 extern SPI_HandleTypeDef hspi1;
- Fls_ConfigTypeDef Fls_Config;
 
+Fls_ConfigTypeDef Fls_Config;
 
+#define FLASH_WRITE_TIMEOUT_MS  5000U
+#define FLASH_ERASE_TIMEOUT_MS  5000U
+#define FLASH_CHIP_TIMEOUT_MS   120000U
+#define FLASH_UID_SIZE          8U
 
+static bool fls_IsRangeValid(uint32_t address, uint32_t length)
+{
+    return (address <= FLASH_W25QXX_FLASH_SIZE) &&
+           (length <= FLASH_W25QXX_FLASH_SIZE - address);
+}
 
+static STD_ReturnTypeDef fls_Transmit(const uint8_t *data, uint16_t length)
+{
+    return HAL_SPI_Transmit(&hspi1, (uint8_t *)data, length,
+                            FLASH_W25QXX_TIMEOUT) == HAL_OK ? E_OK : E_NOT_OK;
+}
 
-/* Functions -----------------------------------------------------------------*/
-/**
-  * @brief  Initialize the flash memory.
-  * @param  None
-  * @retval None
-  */  
+static STD_ReturnTypeDef fls_Receive(uint8_t *data, uint16_t length)
+{
+    return HAL_SPI_Receive(&hspi1, data, length,
+                           FLASH_W25QXX_TIMEOUT) == HAL_OK ? E_OK : E_NOT_OK;
+}
+
+static STD_ReturnTypeDef fls_SendCommand(uint8_t command)
+{
+    STD_ReturnTypeDef result;
+
+    SPI_FLASH_CS_LOW();
+    result = fls_Transmit(&command, 1U);
+    SPI_FLASH_CS_HIGH();
+    return result;
+}
+
+static STD_ReturnTypeDef fls_WaitUntilReady(uint32_t timeout)
+{
+    uint32_t start = HAL_GetTick();
+
+    while ((uint32_t)(HAL_GetTick() - start) < timeout) {
+        if ((fls_wq25xx_Read_Status_Register1() & STATUS_REG1_BUSY_MASK) == 0U) {
+            return E_OK;
+        }
+        HAL_Delay(1U);
+    }
+
+    return E_NOT_OK;
+}
+
+static STD_ReturnTypeDef fls_BeginJob(void)
+{
+    if (Fls_Config.State == FLS_UNINITIALIZED || Fls_Config.State == FLS_BUSY) {
+        return E_NOT_OK;
+    }
+
+    Fls_Config.State = FLS_BUSY;
+    Fls_Config.JobStatus = FLS_JOB_PENDING;
+    return E_OK;
+}
+
+static STD_ReturnTypeDef fls_EndJob(STD_ReturnTypeDef result)
+{
+    Fls_Config.State = FLS_IDLE;
+    Fls_Config.JobStatus = result == E_OK ? FLS_JOB_OK : FLS_JOB_FAILED;
+    return result;
+}
+
 STD_ReturnTypeDef fls_Init(void)
 {
     Fls_Config.FlashSize = FLASH_W25QXX_FLASH_SIZE;
@@ -34,344 +84,421 @@ STD_ReturnTypeDef fls_Init(void)
     Fls_Config.BlockSize = FLASH_W25QXX_BLOCK_SIZE;
     Fls_Config.StartAddress = FLASH_W25QXX_START_ADDRESS;
     Fls_Config.EndAddress = FLASH_W25QXX_END_ADDRESS;
-    Fls_Config.State = FLS_UNINITIALIZED; // Set the state to idle if initialized, otherwise uninitialized
+    Fls_Config.State = FLS_UNINITIALIZED;
+    Fls_Config.JobStatus = FLS_JOB_FAILED;
+    Fls_Config.Mode = NORMAL_MODE;
+
+    if (fls_WaitUntilReady(FLASH_W25QXX_TIMEOUT) != E_OK ||
+        fls_wq25xx_Read_JEDEC_ID() != E_OK ||
+        Fls_Config.FlashInfo.Capacity != 0x15U) {
+        return E_NOT_OK;
+    }
+
+    Fls_Config.State = FLS_IDLE;
     Fls_Config.JobStatus = FLS_JOB_OK;
-    Fls_Config.Mode = NORMAL_MODE;                                     // Normal mode 
-    fls_wq25xx_Read_JEDEC_ID();   
     return E_OK;
 }
 
-/**
-  * @brief  Set the mode of the flash memory.
-  * @param  mode: The mode to set (normal, high performance, etc.).
-  * @retval None
-  */
 STD_ReturnTypeDef fls_setMode(uint8_t mode)
 {
-    Fls_Config.Mode = mode;
-    switch (mode) {
-        case NORMAL_MODE: // Normal mode
-            if (fls_SetNormalMode() != E_OK) {
-                return E_NOT_OK;
-            }
-            break;
-        case QUAD_MODE: // Quad mode
-            if (fls_SetQuadMode() != E_OK) {
-                return E_NOT_OK;
-            }
-            break;
-        default:
-            return E_NOT_OK; // Invalid mode
+    STD_ReturnTypeDef result;
+
+    if (mode == NORMAL_MODE) {
+        result = fls_SetNormalMode();
+    } else if (mode == QUAD_MODE) {
+        result = fls_SetQuadMode();
+    } else {
+        return E_NOT_OK;
     }
-    // Implement mode setting logic if required
-    return E_OK;
+
+    if (result == E_OK) {
+        Fls_Config.Mode = (FLS_ModeTypeDef)mode;
+    }
+    return result;
 }
 
-/**
-  * @brief  Cancel the ongoing job in the flash memory.
-  * @param  None
-  * @retval None
-  */
 STD_ReturnTypeDef fls_Cancel_Job(void)
 {
-    // Implement job cancellation logic if required
-    if (Fls_Config.State == FLASH_STATE_BUSY) {
-        Fls_Config.State = FLASH_STATE_IDLE;
-        Fls_Config.JobStatus = FLS_JOB_FAILED; // Mark the job as failed
-    }
-    return E_OK;
+    return E_NOT_OK;
 }
 
-/**
-  * @brief  Get the current status of the flash memory.
-  * @param  None
-  * @retval None
-  */
 FLS_StatusTypeDef fls_GetStatus(void)
 {
-    return Fls_Config.State; // Implement status retrieval logic if required
+    return Fls_Config.State;
 }
 
-/**
-  * @brief  Get the result of the last job in the flash memory.
-  * @param  None
-  * @retval None
-  */
 FLS_JobStatusTypeDef fls_GetJobResult(void)
 {
-    // Implement job result retrieval logic if required
     return Fls_Config.JobStatus;
 }
 
-
-
-/**
-  * @brief  Get the version information of the flash memory driver.
-  * @param  versionInfo: Pointer to a structure to store the version information.
-  * @retval E_OK if successful, E_NOT_OK if an error occurred.
-  */
 STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo)
 {
-  if (versionInfo == NULL) {
-        return E_NOT_OK; // Handle null pointer error
-    }
-    versionInfo->vendorID = Fls_Config.FlashInfo.ManufacturerID;
-    versionInfo->moduleID = Fls_Config.FlashInfo.MemoryType;
-    versionInfo->module_Size = Fls_Config.FlashSize / 1024; // Size in KB
-    versionInfo->sw_major_version = 0;
-    versionInfo->sw_minor_version = 0;
-    versionInfo->sw_patch_version = 0;
-    return E_OK;
-}
-
-/**
-  * @brief  Read data from the flash memory.
-  * @param  address: The starting address to read from.
-  * @param  data: Pointer to a buffer to store the read data.
-  * @param  length: The number of bytes to read.
-  * @retval E_OK if successful, E_NOT_OK if an error occurred.
-  */
-STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length)
-{
-    if (address < Fls_Config.StartAddress || address + length > Fls_Config.EndAddress) {
-        return E_NOT_OK; // Address out of range
-    }
-    Fls_Config.State = FLS_BUSY; // Set the state to busy
-    Fls_Config.JobStatus = FLS_JOB_PENDING; // Mark the job as pending
-    if (fls_wq25xx_Read_Data(address, data, length) != E_OK) {
+    if (versionInfo == NULL) {
         return E_NOT_OK;
     }
+
+    versionInfo->vendorID = Fls_Config.FlashInfo.ManufacturerID;
+    versionInfo->moduleID = Fls_Config.FlashInfo.MemoryType;
+    versionInfo->module_Size = (uint16_t)(Fls_Config.FlashSize / 1024U);
+    versionInfo->sw_major_version = 1U;
+    versionInfo->sw_minor_version = 0U;
+    versionInfo->sw_patch_version = 0U;
     return E_OK;
 }
 
-/**
-  * @brief  Read data from the flash memory using SPI.
-  * @param  address: The starting address to read from.
-  * @param  data: Pointer to a buffer to store the read data.
-  * @param  length: The number of bytes to read.
-  * @retval E_OK if successful, E_NOT_OK if an error occurred.
-  */
- STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t length)
+STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length)
 {
-    uint8_t address_bytes[3];
-    address_bytes[2] = (address >> 16) & 0xFF; // Address byte 1
-    address_bytes[1] = (address >> 8) & 0xFF; // Address byte 2
-    address_bytes[0] = address & 0xFF; // Address byte 3    
+    STD_ReturnTypeDef result;
+
+    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length) ||
+        fls_BeginJob() != E_OK) {
+        return E_NOT_OK;
+    }
+
+    result = fls_wq25xx_Read_Data(address, data, length);
+    return fls_EndJob(result);
+}
+
+STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t length)
+{
+    uint8_t command[4] = {
+        FLASH_READ_DATA,
+        (uint8_t)(address >> 16),
+        (uint8_t)(address >> 8),
+        (uint8_t)address
+    };
+    STD_ReturnTypeDef result = E_OK;
+
+    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
+        return E_NOT_OK;
+    }
+    if (length == 0U) {
+        return E_OK;
+    }
+
     SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_READ_DATA;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    // Transmit the address (3 bytes)
-    HAL_SPI_Transmit_IT(&hspi1, (uint8_t *)&address_bytes, 3);
-    HAL_SPI_Receive_IT(&hspi1, data, length);
+    if (fls_Transmit(command, sizeof(command)) != E_OK ||
+        fls_Receive(data, length) != E_OK) {
+        result = E_NOT_OK;
+    }
     SPI_FLASH_CS_HIGH();
-    return E_OK;
+    return result;
 }
 
 STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length)
-{ 
-    if (address < Fls_Config.StartAddress || address + length > Fls_Config.EndAddress) {
-        return E_NOT_OK; // Address out of range
-    }
-    Fls_Config.State = FLS_BUSY; // Set the state to busy
-    Fls_Config.JobStatus = FLS_JOB_PENDING; // Mark the job as pending
-    if(fls_wq25xx_Is_Writable()) // Enable write operations
-    {
-      fls_wq25xx_Write_Enable(); // Failed to enable write operations
-    }
-    if (fls_wq25xx_Write_Data(address, data, length) != E_OK) {
-        return E_NOT_OK;
-    } 
-    return E_OK;
-} 
-
- STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_t length)
 {
-    uint8_t address_bytes[3];
-    address_bytes[2] = (address >> 16) & 0xFF; // Address byte 1
-    address_bytes[1] = (address >> 8) & 0xFF; // Address byte 2
-    address_bytes[0] = address & 0xFF;    
-    SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_PAGE_PROGRAM;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    // Transmit the address (3 bytes)
-    HAL_SPI_Transmit_IT(&hspi1, address_bytes, 3);
-    HAL_SPI_Transmit_IT(&hspi1, data, length);
-    SPI_FLASH_CS_HIGH();
-    return E_OK;
+    STD_ReturnTypeDef result = E_OK;
+    uint32_t currentAddress = address;
+    uint16_t remaining = length;
+
+    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length) ||
+        fls_BeginJob() != E_OK) {
+        return E_NOT_OK;
+    }
+
+    while (remaining > 0U) {
+        uint16_t pageOffset = (uint16_t)(currentAddress % FLASH_W25QXX_PAGE_SIZE);
+        uint16_t chunk = (uint16_t)(FLASH_W25QXX_PAGE_SIZE - pageOffset);
+        uint8_t command[4] = {
+            FLASH_PAGE_PROGRAM,
+            (uint8_t)(currentAddress >> 16),
+            (uint8_t)(currentAddress >> 8),
+            (uint8_t)currentAddress
+        };
+
+        if (chunk > remaining) {
+            chunk = remaining;
+        }
+        if (fls_wq25xx_Write_Enable() != E_OK) {
+            result = E_NOT_OK;
+            break;
+        }
+
+        SPI_FLASH_CS_LOW();
+        if (fls_Transmit(command, sizeof(command)) != E_OK ||
+            fls_Transmit(data, chunk) != E_OK) {
+            result = E_NOT_OK;
+        }
+        SPI_FLASH_CS_HIGH();
+        if (result != E_OK || fls_WaitUntilReady(FLASH_WRITE_TIMEOUT_MS) != E_OK) {
+            result = E_NOT_OK;
+            break;
+        }
+
+        currentAddress += chunk;
+        data += chunk;
+        remaining = (uint16_t)(remaining - chunk);
+    }
+
+    return fls_EndJob(result);
 }
 
+STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_t length)
+{
+    return fls_Write(address, data, length);
+}
 
 void fls_SPI_ReceiveCompleteCallback(void)
 {
-    Fls_Config.State = FLS_IDLE; // Set the state to idle after receive is complete
-    Fls_Config.JobStatus = FLS_JOB_OK; // Mark the job as successful
+    if (Fls_Config.State == FLS_BUSY) {
+        Fls_Config.State = FLS_IDLE;
+        Fls_Config.JobStatus = FLS_JOB_OK;
+    }
 }
 
 void fls_SPI_TransmitCompleteCallback(void)
 {
-    Fls_Config.State = FLS_IDLE; // Set the state to idle after transmit is complete
-    Fls_Config.JobStatus = FLS_JOB_OK; // Mark the job as successful
+    if (Fls_Config.State == FLS_BUSY) {
+        Fls_Config.State = FLS_IDLE;
+        Fls_Config.JobStatus = FLS_JOB_OK;
+    }
 }
 
 STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length)
 {
-    if (address < Fls_Config.StartAddress || address + length > Fls_Config.EndAddress) {
-        return E_NOT_OK; // Address out of range
+    uint32_t startAddress;
+    uint32_t endAddress;
+    STD_ReturnTypeDef result = E_OK;
+
+    if (!fls_IsRangeValid(address, length) || fls_BeginJob() != E_OK) {
+        return E_NOT_OK;
     }
-    Fls_Config.State = FLS_BUSY; // Set the state to busy
-    Fls_Config.JobStatus = FLS_JOB_PENDING; // Mark the job as pending
-    fls_wq25xx_Sector_Erase(address); // Implement erase logic if required
-    while (fls_wq25xx_Read_Status_Register1() & STATUS_REG1_BUSY_MASK) {
-        // Wait for the erase operation to complete
+    if (length == 0U) {
+        return fls_EndJob(E_OK);
     }
-    Fls_Config.State = FLS_IDLE; // Set the state to idle after erase is complete
-    Fls_Config.JobStatus = FLS_JOB_OK; // Mark the job as successful
-    return E_OK;
+
+    startAddress = address - (address % FLASH_W25QXX_SECTOR_SIZE);
+    endAddress = address + length;
+    while (startAddress < endAddress) {
+        if (fls_wq25xx_Sector_Erase(startAddress) != E_OK ||
+            fls_WaitUntilReady(FLASH_ERASE_TIMEOUT_MS) != E_OK) {
+            result = E_NOT_OK;
+            break;
+        }
+        startAddress += FLASH_W25QXX_SECTOR_SIZE;
+    }
+    return fls_EndJob(result);
 }
 
- STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address)
+STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address)
 {
-    uint8_t address_bytes[3];
-    address_bytes[2] = (address >> 16) & 0xFF; // Address byte 1
-    address_bytes[1] = (address >> 8) & 0xFF; // Address byte 2   
-    address_bytes[0] = address & 0xFF; // Address byte 3    
+    uint8_t command[4] = {
+        FLASH_SECTOR_ERASE,
+        (uint8_t)(address >> 16),
+        (uint8_t)(address >> 8),
+        (uint8_t)address
+    };
+
+    if (!fls_IsRangeValid(address, 1U) ||
+        fls_wq25xx_Write_Enable() != E_OK) {
+        return E_NOT_OK;
+    }
+
     SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_SECTOR_ERASE;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    // Transmit the address (3 bytes)
-    HAL_SPI_Transmit_IT(&hspi1, address_bytes, 3);
+    if (fls_Transmit(command, sizeof(command)) != E_OK) {
+        SPI_FLASH_CS_HIGH();
+        return E_NOT_OK;
+    }
     SPI_FLASH_CS_HIGH();
     return E_OK;
 }
 
- STD_ReturnTypeDef fls_wq25xx_Read_Status_Register1(void)
+STD_ReturnTypeDef fls_wq25xx_Read_JEDEC_ID(void)
 {
-    uint8_t status;
+    uint8_t command = FLASH_JEDEC_ID;
+    uint8_t jedecID[3];
+
     SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_READ_STATUS_REG1;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    HAL_SPI_Receive_IT(&hspi1, &status, 1);
+    if (fls_Transmit(&command, 1U) != E_OK || fls_Receive(jedecID, sizeof(jedecID)) != E_OK) {
+        SPI_FLASH_CS_HIGH();
+        return E_NOT_OK;
+    }
+    SPI_FLASH_CS_HIGH();
+
+    Fls_Config.FlashInfo.ManufacturerID = jedecID[0];
+    Fls_Config.FlashInfo.MemoryType = (uint16_t)(((uint16_t)jedecID[1] << 8) | jedecID[2]);
+    Fls_Config.FlashInfo.Capacity = jedecID[2];
+    return E_OK;
+}
+
+uint8_t fls_wq25xx_Read_Status_Register1(void)
+{
+    uint8_t command = FLASH_READ_STATUS_REG1;
+    uint8_t status = 0U;
+
+    SPI_FLASH_CS_LOW();
+    if (fls_Transmit(&command, 1U) != E_OK || fls_Receive(&status, 1U) != E_OK) {
+        status = STATUS_REG1_BUSY_MASK;
+    }
     SPI_FLASH_CS_HIGH();
     return status;
 }
 
- STD_ReturnTypeDef fls_wq25xx_Read_JEDEC_ID()
+uint8_t fls_wq25xx_Read_Status_Register2(void)
 {
-    uint8_t jedec_id[3];
+    uint8_t command = FLASH_READ_STATUS_REG2;
+    uint8_t status = 0U;
+
     SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_JEDEC_ID;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    HAL_SPI_Receive_IT(&hspi1, jedec_id, 3);
+    if (fls_Transmit(&command, 1U) != E_OK || fls_Receive(&status, 1U) != E_OK) {
+        status = 0xFFU;
+    }
     SPI_FLASH_CS_HIGH();
-    Fls_Config.FlashInfo.ManufacturerID = jedec_id[0];
-    Fls_Config.FlashInfo.MemoryType = (jedec_id[1] << 8) | jedec_id[2];
-    return E_OK;
+    return status;
 }
 
- STD_ReturnTypeDef fls_wq25xx_Write_Enable(void)
+STD_ReturnTypeDef fls_wq25xx_Write_Status_Register(uint8_t reg1, uint8_t reg2)
 {
+    uint8_t command[3] = {FLASH_WRT_STATUS_PROG, reg1, reg2};
+
+    if (fls_wq25xx_Write_Enable() != E_OK) {
+        return E_NOT_OK;
+    }
     SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_WRITE_ENABLE;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
+    if (fls_Transmit(command, sizeof(command)) != E_OK) {
+        SPI_FLASH_CS_HIGH();
+        return E_NOT_OK;
+    }
     SPI_FLASH_CS_HIGH();
-    return E_OK;
+    return fls_WaitUntilReady(FLASH_WRITE_TIMEOUT_MS);
 }
 
- STD_ReturnTypeDef fls_wq25xx_Write_Disable(void)
+STD_ReturnTypeDef fls_wq25xx_Write_Enable(void)
 {
-    SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_WRITE_DISABLE;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    SPI_FLASH_CS_HIGH();
-    return E_OK;
+    if (fls_SendCommand(FLASH_WRITE_ENABLE) != E_OK) {
+        return E_NOT_OK;
+    }
+    return (fls_wq25xx_Read_Status_Register1() & STATUS_REG1_WEL_MASK) != 0U ?
+           E_OK : E_NOT_OK;
+}
+
+STD_ReturnTypeDef fls_wq25xx_Write_Disable(void)
+{
+    return fls_SendCommand(FLASH_WRITE_DISABLE);
 }
 
 STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length)
 {
-    if (address < Fls_Config.StartAddress || address + length > Fls_Config.EndAddress) {
-        return E_NOT_OK; // Address out of range
+    uint8_t buffer[FLASH_W25QXX_PAGE_SIZE];
+    uint16_t offset = 0U;
+
+    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
+        return E_NOT_OK;
     }
-    uint8_t read_data[length];
-    if (fls_Read(address, read_data, length) != E_OK) {
-        return E_NOT_OK; // Failed to read data
-    }
-    for (uint16_t i = 0; i < length; i++) {
-        if (read_data[i] != data[i]) {
-            return E_NOT_OK; // Data mismatch
+    while (offset < length) {
+        uint16_t chunk = (uint16_t)(length - offset);
+        if (chunk > sizeof(buffer)) {
+            chunk = sizeof(buffer);
         }
+        if (fls_Read(address + offset, buffer, chunk) != E_OK) {
+            return E_NOT_OK;
+        }
+        for (uint16_t i = 0U; i < chunk; i++) {
+            if (buffer[i] != data[offset + i]) {
+                return E_NOT_OK;
+            }
+        }
+        offset = (uint16_t)(offset + chunk);
     }
-    return E_OK; // Data matches
+    return E_OK;
 }
 
-
-
-/**
-  * @brief  Check if the specified flash memory region is blank (erased).
-  * @param  address: The starting address to check.
-  * @param  length: The number of bytes to check.
-  * @retval E_OK if the region is blank, E_NOT_OK if not blank or an error occurred.
-  */
 STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length)
 {
-    if (address < Fls_Config.StartAddress || address + length > Fls_Config.EndAddress) {
-        return E_NOT_OK; // Address out of range
+    uint8_t buffer[FLASH_W25QXX_PAGE_SIZE];
+    uint16_t offset = 0U;
+
+    if (!fls_IsRangeValid(address, length)) {
+        return E_NOT_OK;
     }
-    uint8_t read_data[length];
-    if (fls_Read(address, read_data, length) != E_OK) {
-        return E_NOT_OK; // Failed to read data
-    }
-    for (uint16_t i = 0; i < length; i++) {
-        if (read_data[i] != 0xFF) { // Assuming erased state is 0xFF
-            return E_NOT_OK; // Not blank
+    while (offset < length) {
+        uint16_t chunk = (uint16_t)(length - offset);
+        if (chunk > sizeof(buffer)) {
+            chunk = sizeof(buffer);
         }
+        if (fls_Read(address + offset, buffer, chunk) != E_OK) {
+            return E_NOT_OK;
+        }
+        for (uint16_t i = 0U; i < chunk; i++) {
+            if (buffer[i] != 0xFFU) {
+                return E_NOT_OK;
+            }
+        }
+        offset = (uint16_t)(offset + chunk);
     }
-    return E_OK; // Blank
+    return E_OK;
 }
 
- STD_ReturnTypeDef fls_Erase_Sector(uint32_t address)
+STD_ReturnTypeDef fls_Erase_Sector(uint32_t address)
 {
-    return fls_wq25xx_Sector_Erase(address);
+    STD_ReturnTypeDef result;
+
+    if (!fls_IsRangeValid(address, 1U) || fls_BeginJob() != E_OK) {
+        return E_NOT_OK;
+    }
+    result = fls_wq25xx_Sector_Erase(address);
+    if (result == E_OK) {
+        result = fls_WaitUntilReady(FLASH_ERASE_TIMEOUT_MS);
+    }
+    return fls_EndJob(result);
 }
 
- STD_ReturnTypeDef fls_Erase_Chip(void)
+STD_ReturnTypeDef fls_Erase_Chip(void)
 {
-    SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_CHIP_ERASE;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    SPI_FLASH_CS_HIGH();
-    return E_OK;
+    STD_ReturnTypeDef result;
+
+    if (fls_BeginJob() != E_OK) {
+        return E_NOT_OK;
+    }
+    result = fls_wq25xx_Write_Enable();
+    if (result == E_OK) {
+        result = fls_SendCommand(FLASH_CHIP_ERASE);
+    }
+    if (result == E_OK) {
+        result = fls_WaitUntilReady(FLASH_CHIP_TIMEOUT_MS);
+    }
+    return fls_EndJob(result);
 }
- STD_ReturnTypeDef fls_Erase_Suspend(void)  
+
+STD_ReturnTypeDef fls_Erase_Suspend(void)
 {
-    SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_ERASE_SUSPEND;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    SPI_FLASH_CS_HIGH();
-    return E_OK;
+    return fls_SendCommand(FLASH_ERASE_SUSPEND);
 }
- STD_ReturnTypeDef fls_Erase_Resume(void)
+
+STD_ReturnTypeDef fls_Erase_Resume(void)
 {
-    SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_ERASE_RESUME;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    SPI_FLASH_CS_HIGH();
-    return E_OK;  
+    return fls_SendCommand(FLASH_ERASE_RESUME);
 }
- STD_ReturnTypeDef fls_PowerDown(void)
+
+STD_ReturnTypeDef fls_PowerDown(void)
 {
-    SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_POWER_DOWN;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
-    SPI_FLASH_CS_HIGH();
-    return E_OK;
+    return fls_SendCommand(FLASH_POWER_DOWN);
 }
- STD_ReturnTypeDef fls_ReleasePowerDown(void)
+
+STD_ReturnTypeDef fls_ReleasePowerDown(void)
 {
+    STD_ReturnTypeDef result = fls_SendCommand(FLASH_RELEASE_POWER_DOWN);
+    HAL_Delay(1U);
+    return result;
+}
+
+STD_ReturnTypeDef fls_wq25xx_Read_Unique_ID(uint8_t *unique_id)
+{
+    uint8_t command[5] = {FLASH_READ_UNIQUE_ID, 0U, 0U, 0U, 0U};
+    STD_ReturnTypeDef result = E_OK;
+
+    if (unique_id == NULL) {
+        return E_NOT_OK;
+    }
+
     SPI_FLASH_CS_LOW();
-    uint8_t cmd = FLASH_RELEASE_POWER_DOWN;
-    HAL_SPI_Transmit_IT(&hspi1, &cmd, 1);
+    if (fls_Transmit(command, sizeof(command)) != E_OK ||
+        fls_Receive(unique_id, FLASH_UID_SIZE) != E_OK) {
+        result = E_NOT_OK;
+    }
     SPI_FLASH_CS_HIGH();
-    return E_OK;
+    return result;
 }
 
 STD_ReturnTypeDef fls_SetNormalMode(void)
@@ -381,18 +508,11 @@ STD_ReturnTypeDef fls_SetNormalMode(void)
 
 STD_ReturnTypeDef fls_SetQuadMode(void)
 {
-    // Implement logic to set the flash memory to quad mode if required
-    return E_OK;
+    return E_NOT_OK;
 }
 
-
-STD_ReturnTypeDef fls_wq25xx_Is_Writable( void)
+STD_ReturnTypeDef fls_wq25xx_Is_Writable(void)
 {
-    uint8_t status = fls_wq25xx_Read_Status_Register1();
-    if (status & STATUS_REG1_WEL_MASK) {
-        return E_OK; // Flash is writable
-    } else {
-        return E_NOT_OK; // Flash is not writable
-    }
+    return (fls_wq25xx_Read_Status_Register1() & STATUS_REG1_WEL_MASK) != 0U ?
+           E_OK : E_NOT_OK;
 }
-
