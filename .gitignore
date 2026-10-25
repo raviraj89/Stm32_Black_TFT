@@ -8,3 +8,5 @@ log.html
 report.html
 logs/
 snapshots/
+.vscode/launch.json
+.vscode/settings.json

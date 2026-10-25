@@ -1,11 +1,12 @@
 /**
  ******************************************************************************
  * File Name        : flash_wq25xx.c
- * Description      : Blocking SPI driver for 2 MiB W25Q16 serial flash
+ * Description      : FreeRTOS-worker SPI driver for 2 MiB W25Q16 serial flash
  ******************************************************************************
  */
 #include "flash_wq25xx.h"
 #include "main.h"
+#include "cmsis_os.h"
 #include <string.h>
 
 extern SPI_HandleTypeDef hspi1;
@@ -16,9 +17,39 @@ Fls_ConfigTypeDef Fls_Config;
 #define FLASH_ERASE_TIMEOUT_MS  5000U
 #define FLASH_CHIP_TIMEOUT_MS   120000U
 #define FLASH_UID_SIZE          8U
+#define FLASH_WORKER_REQUEST_FLAG 0x01U
+
+typedef enum {
+    FLS_REQUEST_READ,
+    FLS_REQUEST_WRITE,
+    FLS_REQUEST_ERASE,
+    FLS_REQUEST_COMPARE,
+    FLS_REQUEST_BLANK_CHECK,
+    FLS_REQUEST_ERASE_SECTOR,
+    FLS_REQUEST_ERASE_CHIP
+} Fls_RequestTypeDef;
+
+typedef struct {
+    Fls_RequestTypeDef Type;
+    uint32_t Address;
+    uint8_t *Data;
+    uint16_t Length;
+} Fls_RequestType;
 
 /* One sector is buffered at a time for write-time read/modify/erase/rewrite. */
 static uint8_t fls_SectorBuffer[FLASH_W25QXX_SECTOR_SIZE];
+static Fls_RequestType fls_Request;
+static osMutexId_t fls_StateMutex;
+static osThreadId_t fls_WorkerThread;
+
+static void fls_WorkerTask(void *argument);
+static STD_ReturnTypeDef fls_ReadSync(uint32_t address, uint8_t *data, uint16_t length);
+static STD_ReturnTypeDef fls_WriteSync(uint32_t address, uint8_t *data, uint16_t length);
+static STD_ReturnTypeDef fls_EraseSync(uint32_t address, uint16_t length);
+static STD_ReturnTypeDef fls_CompareSync(uint32_t address, uint8_t *data, uint16_t length);
+static STD_ReturnTypeDef fls_BlankCheckSync(uint32_t address, uint16_t length);
+static STD_ReturnTypeDef fls_EraseSectorSync(uint32_t address);
+static STD_ReturnTypeDef fls_EraseChipSync(void);
 
 /* Validate without adding address and length, avoiding unsigned overflow. */
 static bool fls_IsRangeValid(uint32_t address, uint32_t length)
@@ -67,24 +98,36 @@ static STD_ReturnTypeDef fls_WaitUntilReady(uint32_t timeout)
     return E_NOT_OK;
 }
 
-/* Mark a synchronous public operation as active; reject uninitialized or nested jobs. */
-static STD_ReturnTypeDef fls_BeginJob(void)
+/* Submit one request; caller buffers are referenced until the worker completes it. */
+static STD_ReturnTypeDef fls_SubmitJob(Fls_RequestTypeDef type, uint32_t address,
+                                       uint8_t *data, uint16_t length)
 {
-    if (Fls_Config.State == FLS_UNINITIALIZED || Fls_Config.State == FLS_BUSY) {
+    uint32_t flags;
+
+    if (fls_StateMutex == NULL || fls_WorkerThread == NULL ||
+        osMutexAcquire(fls_StateMutex, 0U) != osOK) {
+        return E_NOT_OK;
+    }
+    if (Fls_Config.State != FLS_IDLE) {
+        (void)osMutexRelease(fls_StateMutex);
         return E_NOT_OK;
     }
 
+    fls_Request.Type = type;
+    fls_Request.Address = address;
+    fls_Request.Data = data;
+    fls_Request.Length = length;
     Fls_Config.State = FLS_BUSY;
     Fls_Config.JobStatus = FLS_JOB_PENDING;
+    flags = osThreadFlagsSet(fls_WorkerThread, FLASH_WORKER_REQUEST_FLAG);
+    if ((int32_t)flags < 0) {
+        Fls_Config.State = FLS_IDLE;
+        Fls_Config.JobStatus = FLS_JOB_FAILED;
+        (void)osMutexRelease(fls_StateMutex);
+        return E_NOT_OK;
+    }
+    (void)osMutexRelease(fls_StateMutex);
     return E_OK;
-}
-
-/* Publish the final job state and return the operation result. */
-static STD_ReturnTypeDef fls_EndJob(STD_ReturnTypeDef result)
-{
-    Fls_Config.State = FLS_IDLE;
-    Fls_Config.JobStatus = result == E_OK ? FLS_JOB_OK : FLS_JOB_FAILED;
-    return result;
 }
 
 /* Program data in page-bounded chunks; W25Q page programming cannot cross a page. */
@@ -162,6 +205,35 @@ STD_ReturnTypeDef fls_Init(void)
     return E_OK;
 }
 
+/* Create synchronization objects and the worker after the RTOS kernel is ready. */
+STD_ReturnTypeDef fls_StartWorker(void)
+{
+    static const osThreadAttr_t workerAttributes = {
+        .name = "FlashWorker",
+        .stack_size = 1024U,
+        .priority = osPriorityNormal
+    };
+
+    if (osKernelGetState() != osKernelReady ||
+        Fls_Config.State != FLS_IDLE ||
+        fls_WorkerThread != NULL) {
+        return E_NOT_OK;
+    }
+
+    fls_StateMutex = osMutexNew(NULL);
+    if (fls_StateMutex == NULL) {
+        return E_NOT_OK;
+    }
+
+    fls_WorkerThread = osThreadNew(fls_WorkerTask, NULL, &workerAttributes);
+    if (fls_WorkerThread == NULL) {
+        (void)osMutexDelete(fls_StateMutex);
+        fls_StateMutex = NULL;
+        return E_NOT_OK;
+    }
+    return E_OK;
+}
+
 /* Change the selected operating mode only when the requested mode is supported. */
 STD_ReturnTypeDef fls_setMode(uint8_t mode)
 {
@@ -181,7 +253,7 @@ STD_ReturnTypeDef fls_setMode(uint8_t mode)
     return result;
 }
 
-/* Synchronous transfers cannot be interrupted once started. */
+/* Active worker jobs are not cancellable once a flash erase/program starts. */
 STD_ReturnTypeDef fls_Cancel_Job(void)
 {
     return E_NOT_OK;
@@ -190,13 +262,33 @@ STD_ReturnTypeDef fls_Cancel_Job(void)
 /* Return the driver's current initialization or operation state. */
 FLS_StatusTypeDef fls_GetStatus(void)
 {
-    return Fls_Config.State;
+    FLS_StatusTypeDef state;
+
+    if (fls_StateMutex == NULL) {
+        return Fls_Config.State;
+    }
+    if (osMutexAcquire(fls_StateMutex, osWaitForever) != osOK) {
+        return FLS_BUSY;
+    }
+    state = Fls_Config.State;
+    (void)osMutexRelease(fls_StateMutex);
+    return state;
 }
 
 /* Return the success, failure, or pending result for the last job. */
 FLS_JobStatusTypeDef fls_GetJobResult(void)
 {
-    return Fls_Config.JobStatus;
+    FLS_JobStatusTypeDef result;
+
+    if (fls_StateMutex == NULL) {
+        return Fls_Config.JobStatus;
+    }
+    if (osMutexAcquire(fls_StateMutex, osWaitForever) != osOK) {
+        return FLS_JOB_FAILED;
+    }
+    result = Fls_Config.JobStatus;
+    (void)osMutexRelease(fls_StateMutex);
+    return result;
 }
 
 /* Populate caller-provided version information; reject a null output pointer. */
@@ -215,18 +307,19 @@ STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo)
     return E_OK;
 }
 
-/* Read a range and update the driver's synchronous job status. */
+/* Queue a read for the worker task; the destination must outlive the request. */
 STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length)
 {
-    STD_ReturnTypeDef result;
-
-    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length) ||
-        fls_BeginJob() != E_OK) {
+    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
         return E_NOT_OK;
     }
+    return fls_SubmitJob(FLS_REQUEST_READ, address, data, length);
+}
 
-    result = fls_wq25xx_Read_Data(address, data, length);
-    return fls_EndJob(result);
+/* Worker-side synchronous read implementation. */
+static STD_ReturnTypeDef fls_ReadSync(uint32_t address, uint8_t *data, uint16_t length)
+{
+    return fls_wq25xx_Read_Data(address, data, length);
 }
 
 /* Send READ DATA and keep CS low across the command, address, and data phases. */
@@ -260,17 +353,22 @@ STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t
  * Preserve unaffected bytes by rewriting each touched sector from the RAM
  * snapshot. Power loss or an I/O failure after erase can still lose that sector.
  */
+/* Queue a preserving write; the source must remain valid until completion. */
 STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length)
+{
+    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
+        return E_NOT_OK;
+    }
+    return fls_SubmitJob(FLS_REQUEST_WRITE, address, data, length);
+}
+
+/* Worker-side read/modify/erase/rewrite operation. */
+static STD_ReturnTypeDef fls_WriteSync(uint32_t address, uint8_t *data, uint16_t length)
 {
     STD_ReturnTypeDef result = E_OK;
     uint32_t currentAddress = address;
     uint32_t requestEnd = address + length;
     uint16_t remaining = length;
-
-    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length) ||
-        fls_BeginJob() != E_OK) {
-        return E_NOT_OK;
-    }
 
     while (remaining > 0U) {
         uint32_t sectorAddress =
@@ -316,7 +414,7 @@ STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length)
         remaining = (uint16_t)(requestEnd - currentAddress);
     }
 
-    return fls_EndJob(result);
+    return result;
 }
 
 /* Keep the legacy low-level entry point aligned with preserving write behavior. */
@@ -325,36 +423,34 @@ STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_
     return fls_Write(address, data, length);
 }
 
-/* Legacy callback hook retained for code that calls it explicitly. */
+/* Blocking worker transfers do not use HAL completion callbacks. */
 void fls_SPI_ReceiveCompleteCallback(void)
 {
-    if (Fls_Config.State == FLS_BUSY) {
-        Fls_Config.State = FLS_IDLE;
-        Fls_Config.JobStatus = FLS_JOB_OK;
-    }
 }
 
-/* Legacy callback hook retained for code that calls it explicitly. */
+/* Blocking worker transfers do not use HAL completion callbacks. */
 void fls_SPI_TransmitCompleteCallback(void)
 {
-    if (Fls_Config.State == FLS_BUSY) {
-        Fls_Config.State = FLS_IDLE;
-        Fls_Config.JobStatus = FLS_JOB_OK;
-    }
 }
 
-/* Erase every sector intersecting the requested range; this does not preserve data. */
+/* Queue erase of all sectors intersecting the requested range. */
 STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length)
+{
+    if (!fls_IsRangeValid(address, length)) {
+        return E_NOT_OK;
+    }
+    return fls_SubmitJob(FLS_REQUEST_ERASE, address, NULL, length);
+}
+
+/* Worker-side erase implementation; unrelated bytes in affected sectors are lost. */
+static STD_ReturnTypeDef fls_EraseSync(uint32_t address, uint16_t length)
 {
     uint32_t startAddress;
     uint32_t endAddress;
     STD_ReturnTypeDef result = E_OK;
 
-    if (!fls_IsRangeValid(address, length) || fls_BeginJob() != E_OK) {
-        return E_NOT_OK;
-    }
     if (length == 0U) {
-        return fls_EndJob(E_OK);
+        return E_OK;
     }
 
     startAddress = address - (address % FLASH_W25QXX_SECTOR_SIZE);
@@ -367,10 +463,10 @@ STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length)
         }
         startAddress += FLASH_W25QXX_SECTOR_SIZE;
     }
-    return fls_EndJob(result);
+    return result;
 }
 
-/* Start erasing the sector containing address; the caller waits for completion. */
+/* Synchronous low-level erase command; the worker waits for completion. */
 STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address)
 {
     uint8_t command[4] = {
@@ -474,21 +570,27 @@ STD_ReturnTypeDef fls_wq25xx_Write_Disable(void)
     return fls_SendCommand(FLASH_WRITE_DISABLE);
 }
 
-/* Compare in bounded chunks so the temporary buffer does not grow with length. */
+/* Queue a comparison; the expected-data buffer must remain valid until completion. */
 STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length)
+{
+    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
+        return E_NOT_OK;
+    }
+    return fls_SubmitJob(FLS_REQUEST_COMPARE, address, data, length);
+}
+
+/* Worker-side compare using a bounded temporary buffer. */
+static STD_ReturnTypeDef fls_CompareSync(uint32_t address, uint8_t *data, uint16_t length)
 {
     uint8_t buffer[FLASH_W25QXX_PAGE_SIZE];
     uint16_t offset = 0U;
 
-    if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
-        return E_NOT_OK;
-    }
     while (offset < length) {
         uint16_t chunk = (uint16_t)(length - offset);
         if (chunk > sizeof(buffer)) {
             chunk = sizeof(buffer);
         }
-        if (fls_Read(address + offset, buffer, chunk) != E_OK) {
+        if (fls_wq25xx_Read_Data(address + offset, buffer, chunk) != E_OK) {
             return E_NOT_OK;
         }
         for (uint16_t i = 0U; i < chunk; i++) {
@@ -501,21 +603,27 @@ STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length)
     return E_OK;
 }
 
-/* Verify erased contents (0xFF) using a fixed-size temporary read buffer. */
+/* Queue a blank check. */
 STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length)
+{
+    if (!fls_IsRangeValid(address, length)) {
+        return E_NOT_OK;
+    }
+    return fls_SubmitJob(FLS_REQUEST_BLANK_CHECK, address, NULL, length);
+}
+
+/* Worker-side verify of erased contents using a fixed-size temporary buffer. */
+static STD_ReturnTypeDef fls_BlankCheckSync(uint32_t address, uint16_t length)
 {
     uint8_t buffer[FLASH_W25QXX_PAGE_SIZE];
     uint16_t offset = 0U;
 
-    if (!fls_IsRangeValid(address, length)) {
-        return E_NOT_OK;
-    }
     while (offset < length) {
         uint16_t chunk = (uint16_t)(length - offset);
         if (chunk > sizeof(buffer)) {
             chunk = sizeof(buffer);
         }
-        if (fls_Read(address + offset, buffer, chunk) != E_OK) {
+        if (fls_wq25xx_Read_Data(address + offset, buffer, chunk) != E_OK) {
             return E_NOT_OK;
         }
         for (uint16_t i = 0U; i < chunk; i++) {
@@ -528,29 +636,38 @@ STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length)
     return E_OK;
 }
 
-/* Erase the addressed sector and wait until the device reports ready. */
+/* Queue erase of the sector containing address. */
 STD_ReturnTypeDef fls_Erase_Sector(uint32_t address)
+{
+    if (!fls_IsRangeValid(address, 1U)) {
+        return E_NOT_OK;
+    }
+    return fls_SubmitJob(FLS_REQUEST_ERASE_SECTOR, address, NULL, 0U);
+}
+
+/* Worker-side sector erase. */
+static STD_ReturnTypeDef fls_EraseSectorSync(uint32_t address)
 {
     STD_ReturnTypeDef result;
 
-    if (!fls_IsRangeValid(address, 1U) || fls_BeginJob() != E_OK) {
-        return E_NOT_OK;
-    }
     result = fls_wq25xx_Sector_Erase(address);
     if (result == E_OK) {
         result = fls_WaitUntilReady(FLASH_ERASE_TIMEOUT_MS);
     }
-    return fls_EndJob(result);
+    return result;
 }
 
-/* Erase the whole chip and allow the longer chip-erase completion time. */
+/* Queue a whole-chip erase. */
 STD_ReturnTypeDef fls_Erase_Chip(void)
+{
+    return fls_SubmitJob(FLS_REQUEST_ERASE_CHIP, 0U, NULL, 0U);
+}
+
+/* Worker-side whole-chip erase. */
+static STD_ReturnTypeDef fls_EraseChipSync(void)
 {
     STD_ReturnTypeDef result;
 
-    if (fls_BeginJob() != E_OK) {
-        return E_NOT_OK;
-    }
     result = fls_wq25xx_Write_Enable();
     if (result == E_OK) {
         result = fls_SendCommand(FLASH_CHIP_ERASE);
@@ -558,7 +675,7 @@ STD_ReturnTypeDef fls_Erase_Chip(void)
     if (result == E_OK) {
         result = fls_WaitUntilReady(FLASH_CHIP_TIMEOUT_MS);
     }
-    return fls_EndJob(result);
+    return result;
 }
 
 /* Send the erase-suspend command. */
@@ -623,4 +740,66 @@ STD_ReturnTypeDef fls_wq25xx_Is_Writable(void)
 {
     return (fls_wq25xx_Read_Status_Register1() & STATUS_REG1_WEL_MASK) != 0U ?
            E_OK : E_NOT_OK;
+}
+
+/* Execute queued jobs away from their submitting task. HAL polling only blocks this worker. */
+static void fls_WorkerTask(void *argument)
+{
+    (void)argument;
+
+    for (;;) {
+        uint32_t flags = osThreadFlagsWait(FLASH_WORKER_REQUEST_FLAG,
+                                           osFlagsWaitAny,
+                                           osWaitForever);
+        Fls_RequestType request;
+        STD_ReturnTypeDef result;
+
+        if ((int32_t)flags < 0) {
+            osDelay(1U);
+            continue;
+        }
+        if (osMutexAcquire(fls_StateMutex, osWaitForever) != osOK) {
+            Fls_Config.State = FLS_IDLE;
+            Fls_Config.JobStatus = FLS_JOB_FAILED;
+            continue;
+        }
+        request = fls_Request;
+        (void)osMutexRelease(fls_StateMutex);
+
+        switch (request.Type) {
+        case FLS_REQUEST_READ:
+            result = fls_ReadSync(request.Address, request.Data, request.Length);
+            break;
+        case FLS_REQUEST_WRITE:
+            result = fls_WriteSync(request.Address, request.Data, request.Length);
+            break;
+        case FLS_REQUEST_ERASE:
+            result = fls_EraseSync(request.Address, request.Length);
+            break;
+        case FLS_REQUEST_COMPARE:
+            result = fls_CompareSync(request.Address, request.Data, request.Length);
+            break;
+        case FLS_REQUEST_BLANK_CHECK:
+            result = fls_BlankCheckSync(request.Address, request.Length);
+            break;
+        case FLS_REQUEST_ERASE_SECTOR:
+            result = fls_EraseSectorSync(request.Address);
+            break;
+        case FLS_REQUEST_ERASE_CHIP:
+            result = fls_EraseChipSync();
+            break;
+        default:
+            result = E_NOT_OK;
+            break;
+        }
+
+        if (osMutexAcquire(fls_StateMutex, osWaitForever) == osOK) {
+            Fls_Config.State = FLS_IDLE;
+            Fls_Config.JobStatus = result == E_OK ? FLS_JOB_OK : FLS_JOB_FAILED;
+            (void)osMutexRelease(fls_StateMutex);
+        } else {
+            Fls_Config.State = FLS_IDLE;
+            Fls_Config.JobStatus = FLS_JOB_FAILED;
+        }
+    }
 }

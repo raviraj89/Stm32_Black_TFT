@@ -118,36 +118,53 @@ typedef struct {
     uint8_t sw_patch_version;
 } Fls_VersionInfoTypeDef;
 
+/*
+ * Call job-submission and status APIs from an RTOS task, not an ISR. High-level
+ * read/write/erase/check jobs run on the worker; only one job may be active.
+ * Direct fls_wq25xx command helpers perform synchronous SPI transfers and must
+ * not be used concurrently with a worker job.
+ */
 /** Initialize the driver and confirm that the connected device is a W25Q16. */
 STD_ReturnTypeDef fls_Init(void);
+/** Create the FreeRTOS flash worker after osKernelInitialize() and fls_Init(). */
+STD_ReturnTypeDef fls_StartWorker(void);
 /** Select normal SPI or quad mode; quad mode is unsupported by this SPI1 setup. */
 STD_ReturnTypeDef fls_setMode(uint8_t mode);
-/** Cancel the active flash operation; blocking operations cannot be cancelled. */
+/** Cancel the active flash operation; accepted jobs cannot be cancelled. */
 STD_ReturnTypeDef fls_Cancel_Job(void);
-/** Return the current driver state. */
+/** Return FLS_BUSY while a worker job is in progress, otherwise the driver state. */
 FLS_StatusTypeDef fls_GetStatus(void);
 /** Return the result of the most recently completed flash job. */
 FLS_JobStatusTypeDef fls_GetJobResult(void);
 /** Copy device and driver version information to versionInfo. */
 STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo);
 
-/** Read length bytes from address; the range must fit in the 2 MiB device. */
+/**
+ * Queue a read. E_OK means accepted; poll fls_GetJobResult() for completion.
+ * The destination buffer must remain valid until the job completes.
+ * Only one job can be active; submissions while busy return E_NOT_OK.
+ */
 STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length);
 /**
- * Write length bytes while preserving other bytes in every touched 4 KiB sector.
- * Each affected sector is read to RAM, erased, and restored with the update.
+ * Queue a preserving write. E_OK means accepted; poll fls_GetJobResult().
+ * The source buffer must remain valid until the job completes.
+ * Only one job can be active; submissions while busy return E_NOT_OK.
  */
 STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length);
-/** Erase every 4 KiB sector intersecting the range; surrounding data is lost. */
+/**
+ * Queue erase of every 4 KiB sector intersecting the range; surrounding data is lost.
+ * E_OK means accepted; poll fls_GetJobResult() for completion.
+ * Only one job can be active; submissions while busy return E_NOT_OK.
+ */
 STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length);
-/** Compare flash contents with data; return E_NOT_OK on mismatch or I/O error. */
+/** Queue comparison; data must remain valid until completion. Only one job can be active. */
 STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length);
-/** Check whether every byte in the range is erased (0xFF). */
+/** Queue a blank check; inspect fls_GetJobResult() when it finishes. Only one job can be active. */
 STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length);
 
-/** Erase the sector containing address and wait for completion. */
+/** Queue erase of the sector containing address. */
 STD_ReturnTypeDef fls_Erase_Sector(uint32_t address);
-/** Erase the entire chip and wait for completion. */
+/** Queue a whole-chip erase. */
 STD_ReturnTypeDef fls_Erase_Chip(void);
 /** Suspend an active erase operation. */
 STD_ReturnTypeDef fls_Erase_Suspend(void);
@@ -158,11 +175,11 @@ STD_ReturnTypeDef fls_PowerDown(void);
 /** Release deep power-down mode. */
 STD_ReturnTypeDef fls_ReleasePowerDown(void);
 
-/** Read the JEDEC ID and update the device information in Fls_Config. */
+/** Synchronous JEDEC read; call only while no worker job is active. */
 STD_ReturnTypeDef fls_wq25xx_Read_JEDEC_ID(void);
-/** Read status register 1; an SPI error is reported as BUSY. */
+/** Synchronous status read; an SPI error is reported as BUSY. */
 uint8_t fls_wq25xx_Read_Status_Register1(void);
-/** Read status register 2; an SPI error is reported as 0xFF. */
+/** Synchronous status read; an SPI error is reported as 0xFF. */
 uint8_t fls_wq25xx_Read_Status_Register2(void);
 /** Write both status registers after enabling writes. */
 STD_ReturnTypeDef fls_wq25xx_Write_Status_Register(uint8_t reg1, uint8_t reg2);
@@ -172,9 +189,9 @@ STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address);
 STD_ReturnTypeDef fls_wq25xx_Write_Enable(void);
 /** Clear the write-enable latch. */
 STD_ReturnTypeDef fls_wq25xx_Write_Disable(void);
-/** Read raw bytes from the device without updating job state. */
+/** Synchronous low-level read; do not call while a worker job is active. */
 STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t length);
-/** Use the preserving high-level write operation. */
+/** Queue the preserving high-level write operation. */
 STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_t length);
 /** Read the device's 8-byte unique identifier. */
 STD_ReturnTypeDef fls_wq25xx_Read_Unique_ID(uint8_t *unique_id);

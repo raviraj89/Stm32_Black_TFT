@@ -126,7 +126,10 @@ int main(void)
   MX_SPI1_Init();
 
   /* USER CODE BEGIN 2 */
-  fls_Init();
+  if (fls_Init() != E_OK)
+  {
+    Error_Handler();
+  }
   AppInit();
 
   
@@ -135,6 +138,10 @@ int main(void)
 
   /* Init scheduler */
   osKernelInitialize();
+  if (fls_StartWorker() != E_OK)
+  {
+    Error_Handler();
+  }
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -562,13 +569,65 @@ void StartBlinkTask(void *argument)
   for(;;)
   {
 
-    fls_Write(0x000400, (uint8_t *)data_to_write2, 15);
+    if (fls_Write(0x000600, data_to_write2, 15) != E_OK)
+    {
+      osDelay(50);
+      continue;
+    }
+    while (fls_GetStatus() == FLS_BUSY)
+    {
+      osDelay(1);
+    }
+    if (fls_GetJobResult() != FLS_JOB_OK)
+    {
+      osDelay(50);
+      continue;
+    }
     osDelay(50);
-    fls_Read(0x000400, (uint8_t *)read_buffer, 15);
+    if (fls_Read(0x000600, read_buffer, 15) != E_OK)
+    {
+      osDelay(50);
+      continue;
+    }
+    while (fls_GetStatus() == FLS_BUSY)
+    {
+      osDelay(1);
+    }
+    if (fls_GetJobResult() != FLS_JOB_OK)
+    {
+      osDelay(50);
+      continue;
+    }
     osDelay(50);
-    fls_Write(0x000400, (uint8_t *)data_to_write, 13);
+    if (fls_Write(0x000600, data_to_write, 13) != E_OK)
+    {
+      osDelay(50);
+      continue;
+    }
+    while (fls_GetStatus() == FLS_BUSY)
+    {
+      osDelay(1);
+    }
+    if (fls_GetJobResult() != FLS_JOB_OK)
+    {
+      osDelay(50);
+      continue;
+    }
     osDelay(50);
-    fls_Read(0x000400, (uint8_t *)read_buffer, 15);
+    if (fls_Read(0x000600, read_buffer, 15) != E_OK)
+    {
+      osDelay(50);
+      continue;
+    }
+    while (fls_GetStatus() == FLS_BUSY)
+    {
+      osDelay(1);
+    }
+    if (fls_GetJobResult() != FLS_JOB_OK)
+    {
+      osDelay(50);
+      continue;
+    }
     LedToggle(LED2);
 	  osDelay(50);
 	  LedToggle(LED2);
