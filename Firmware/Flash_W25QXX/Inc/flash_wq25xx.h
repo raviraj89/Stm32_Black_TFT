@@ -137,13 +137,13 @@ typedef struct {
 /* Functions -----------------------------------------------------------------*/
 STD_ReturnTypeDef fls_Init(void);
 STD_ReturnTypeDef fls_setMode(uint8_t mode);
- STD_ReturnTypeDef fls_Erase_Sector(uint32_t address);
- STD_ReturnTypeDef fls_Erase_Chip(void);
- STD_ReturnTypeDef fls_Erase_Suspend(void);
- STD_ReturnTypeDef fls_Erase_Resume(void);
- STD_ReturnTypeDef fls_PowerDown(void);
- STD_ReturnTypeDef fls_ReleasePowerDown(void);
- STD_ReturnTypeDef fls_Cancel_Job(void);
+STD_ReturnTypeDef fls_Erase_Sector(uint32_t address);
+STD_ReturnTypeDef fls_Erase_Chip(void);
+STD_ReturnTypeDef fls_Erase_Suspend(void);
+STD_ReturnTypeDef fls_Erase_Resume(void);
+STD_ReturnTypeDef fls_PowerDown(void);
+STD_ReturnTypeDef fls_ReleasePowerDown(void);
+STD_ReturnTypeDef fls_Cancel_Job(void);
 FLS_StatusTypeDef fls_GetStatus(void);
 FLS_JobStatusTypeDef fls_GetJobResult(void);
 STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo);
@@ -153,30 +153,26 @@ STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length);
 STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length);
 STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length);
 STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length);
+/*
+ * E_OK from an operation means the asynchronous job was accepted. Call
+ * fls_MainFunction() regularly and check fls_GetJobResult() for completion.
+ * DMA buffers must remain valid and DMA-accessible until the job completes.
+ */
+void fls_MainFunction(void);
 
- STD_ReturnTypeDef fls_Erase_Sector(uint32_t address);
- STD_ReturnTypeDef fls_Erase_Chip(void);
- STD_ReturnTypeDef fls_Erase_Suspend(void);
- STD_ReturnTypeDef fls_Erase_Resume(void);
- STD_ReturnTypeDef fls_PowerDown(void);
- STD_ReturnTypeDef fls_ReleasePowerDown(void);
- STD_ReturnTypeDef fls_wq25xx_Read_JEDEC_ID(void); 
- STD_ReturnTypeDef fls_wq25xx_Read_Status_Register1(void);
- STD_ReturnTypeDef fls_wq25xx_Read_Status_Register2(void);
- STD_ReturnTypeDef fls_wq25xx_Write_Status_Register(uint8_t reg1, uint8_t reg2);
- STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address);
- STD_ReturnTypeDef fls_wq25xx_Write_Enable(void);
- STD_ReturnTypeDef fls_wq25xx_Write_Disable(void);
- STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t length);
- STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_t length);
- STD_ReturnTypeDef fls_wq25xx_Read_Unique_ID(uint8_t *unique_id);
+STD_ReturnTypeDef fls_wq25xx_Read_JEDEC_ID(void);
+STD_ReturnTypeDef fls_wq25xx_Read_Status_Register1(uint8_t *status);
+STD_ReturnTypeDef fls_wq25xx_Read_Status_Register2(uint8_t *status);
+STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address);
+STD_ReturnTypeDef fls_wq25xx_Write_Enable(void);
+STD_ReturnTypeDef fls_wq25xx_Write_Disable(void);
+STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t length);
+STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_t length);
 void fls_SPI_TransmitCompleteCallback(void);
 void fls_SPI_ReceiveCompleteCallback(void);
+void fls_SPI_ErrorCallback(void);
 STD_ReturnTypeDef fls_SetNormalMode(void);
-
-
 STD_ReturnTypeDef fls_SetQuadMode(void);
-STD_ReturnTypeDef fls_wq25xx_Is_Writable(void);
 
 
 #endif // /*__FLASH_WQ25XX_H */

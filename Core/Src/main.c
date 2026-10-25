@@ -47,6 +47,8 @@ RTC_HandleTypeDef hrtc;
 
 SPI_HandleTypeDef hspi1;
 SPI_HandleTypeDef hspi2;
+DMA_HandleTypeDef hdma_spi1_rx;
+DMA_HandleTypeDef hdma_spi1_tx;
 
 HCD_HandleTypeDef hhcd_USB_OTG_FS;
 
@@ -524,6 +526,22 @@ void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi)
    */
 }
 
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi)
+{
+   if (hspi->Instance == SPI1)
+   {
+     fls_SPI_ReceiveCompleteCallback();
+   }
+}
+
+void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
+{
+   if (hspi->Instance == SPI1)
+   {
+     fls_SPI_ErrorCallback();
+   }
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -539,6 +557,7 @@ void StartDefaultTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
+    fls_MainFunction();
     AppLoop();
   }
   /* USER CODE END 5 */
@@ -560,11 +579,21 @@ void StartBlinkTask(void *argument)
   /* Infinite loop */
   for(;;)
   {
-
-    fls_Write(0x000200, (uint8_t *)data_to_write, 13);
-    osDelay(50);
-    fls_Read(0x000200, (uint8_t *)read_buffer, 13);
-    osDelay(50);
+    if (fls_Write(0x000200, data_to_write, sizeof(data_to_write)) == E_OK)
+    {
+      while (fls_GetStatus() == FLS_BUSY)
+      {
+        osDelay(1);
+      }
+      if (fls_GetJobResult() == FLS_JOB_OK &&
+          fls_Read(0x000200, read_buffer, sizeof(read_buffer)) == E_OK)
+      {
+        while (fls_GetStatus() == FLS_BUSY)
+        {
+          osDelay(1);
+        }
+      }
+    }
     LedToggle(LED2);
 	  osDelay(50);
 	  LedToggle(LED2);
