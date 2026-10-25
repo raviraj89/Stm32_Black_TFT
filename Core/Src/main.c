@@ -26,6 +26,7 @@
 #include "app.hpp"
 #include "flash.h"
 #include "wq25xx.h"
+#include "flash_test.hpp"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -562,77 +563,41 @@ void StartDefaultTask(void *argument)
 void StartBlinkTask(void *argument)
 {
   /* USER CODE BEGIN StartBlinkTask */
-  uint8_t read_buffer[15] = {0};
+  (void)argument;
+  LedOff(LED2);
+  LedOff(LED3);
 
-  uint8_t data_to_write[13] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd};
-  uint8_t data_to_write2[15] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,0x88,0x99};
-  /* Infinite loop */
-  for(;;)
+  /* Wait for any key press used during application startup to be released. */
+  while (KeyTest(KEY1))
   {
+    osDelay(20U);
+  }
 
-    if (fls_Write(0x000800, data_to_write2, 15) != E_OK)
+  for (;;)
+  {
+    if (KeyTest(KEY1))
     {
-      osDelay(50);
-      continue;
+      osDelay(30U);
+      if (KeyTest(KEY1))
+      {
+        while (KeyTest(KEY1))
+        {
+          osDelay(20U);
+        }
+
+        if (FlashTest_Run())
+        {
+          LedOn(LED2);
+          LedOff(LED3);
+        }
+        else
+        {
+          LedOff(LED2);
+          LedOn(LED3);
+        }
+      }
     }
-    while (fls_GetStatus() == FLS_BUSY)
-    {
-      osDelay(1);
-    }
-    if (fls_GetJobResult() != FLS_JOB_OK)
-    {
-      osDelay(50);
-      continue;
-    }
-    osDelay(50);
-    if (fls_Read(0x000800, read_buffer, 15) != E_OK)
-    {
-      osDelay(50);
-      continue;
-    }
-    while (fls_GetStatus() == FLS_BUSY)
-    {
-      osDelay(1);
-    }
-    if (fls_GetJobResult() != FLS_JOB_OK)
-    {
-      osDelay(50);
-      continue;
-    }
-    osDelay(50);
-    if (fls_Write(0x000800, data_to_write, 13) != E_OK)
-    {
-      osDelay(50);
-      continue;
-    }
-    while (fls_GetStatus() == FLS_BUSY)
-    {
-      osDelay(1);
-    }
-    if (fls_GetJobResult() != FLS_JOB_OK)
-    {
-      osDelay(50);
-      continue;
-    }
-    osDelay(50);
-    if (fls_Read(0x000800, read_buffer, 15) != E_OK)
-    {
-      osDelay(50);
-      continue;
-    }
-    while (fls_GetStatus() == FLS_BUSY)
-    {
-      osDelay(1);
-    }
-    if (fls_GetJobResult() != FLS_JOB_OK)
-    {
-      osDelay(50);
-      continue;
-    }
-    LedToggle(LED2);
-	  osDelay(50);
-	  LedToggle(LED2);
-	  osDelay(950);
+    osDelay(1000U);
   }
   /* USER CODE END StartBlinkTask */
 }

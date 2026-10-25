@@ -49,6 +49,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Src/chg_value.cpp
     Application/Src/config.cpp
     Application/Src/frame.cpp
+    Application/Src/flash_test.cpp
     Application/Src/item.cpp
     Application/Src/label.cpp
     Application/Src/lcd_fonts.cpp
@@ -58,6 +59,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/board.c
     Firmware/Flash/Src/flash.c
     Firmware/Flash_W25QXX/Src/wq25xx.c
+    Firmware/Stepper/Src/stepper.c
     
 )
 
@@ -66,6 +68,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Inc
     Firmware/Flash/Inc
     Firmware/Flash_W25QXX/Inc
+    Firmware/Stepper/Inc
 )
 
 # Add project symbols (macros)

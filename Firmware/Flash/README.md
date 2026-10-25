@@ -27,3 +27,13 @@ The generic core currently reserves a 4 KiB sector buffer, so backends must
 report sectors no larger than 4 KiB and page sizes that divide the sector size.
 The selected backend must provide the single `FlashBackend` definition declared
 by `flash_backend.h`; link only one backend implementation into the firmware.
+
+## Application self-test
+
+`Application/Src/flash_test.cpp` is an RTOS-task example that exercises
+asynchronous read, write, erase, blank-check, compare, and partial-write
+preservation. It backs up the device's final 4 KiB sector at `0x1FF000`,
+temporarily erases and tests it, then restores and compares the saved contents.
+In the current application, press KEY1 to run the test; LED2 indicates success
+and LED3 indicates failure. A power loss during the test can interrupt sector
+restoration, so reserve the test sector if its contents are important.

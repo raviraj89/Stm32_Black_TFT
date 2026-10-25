@@ -14,6 +14,9 @@
 #define FLASH_COMPARE_BUFFER_SIZE  256U
 #define FLASH_SECTOR_BUFFER_SIZE   4096U
 
+/**
+ * @brief Operations accepted by the flash worker.
+ */
 typedef enum {
     FLS_REQUEST_READ,
     FLS_REQUEST_WRITE,
@@ -24,6 +27,9 @@ typedef enum {
     FLS_REQUEST_ERASE_CHIP
 } Fls_RequestTypeDef;
 
+/**
+ * @brief Snapshot of one queued operation.
+ */
 typedef struct {
     Fls_RequestTypeDef Type;
     uint32_t Address;
@@ -33,8 +39,11 @@ typedef struct {
 
 Fls_ConfigTypeDef Fls_Config;
 
+/** @brief Scratch space used to preserve one complete sector during writes. */
 static uint8_t fls_SectorBuffer[FLASH_SECTOR_BUFFER_SIZE];
+/** @brief Bounded scratch buffer used by compare and blank-check operations. */
 static uint8_t fls_CompareBuffer[FLASH_COMPARE_BUFFER_SIZE];
+/** @brief Single pending request; access is protected by fls_StateMutex. */
 static Fls_RequestType fls_Request;
 static osMutexId_t fls_StateMutex;
 static osThreadId_t fls_WorkerThread;
@@ -44,6 +53,13 @@ static STD_ReturnTypeDef fls_SubmitJob(Fls_RequestTypeDef type, uint32_t address
                                        uint8_t *data, uint16_t length);
 static STD_ReturnTypeDef fls_ExecuteRequest(const Fls_RequestType *request);
 
+/**
+ * @brief Validate a byte range against the detected device address window.
+ * @param address First address in the range.
+ * @param length Number of bytes in the range.
+ * @return true when the entire range is valid, including an empty range at
+ * the end address boundary.
+ */
 static bool fls_IsRangeValid(uint32_t address, uint32_t length)
 {
     uint32_t offset;
@@ -56,6 +72,16 @@ static bool fls_IsRangeValid(uint32_t address, uint32_t length)
            length <= Fls_Config.FlashSize - offset;
 }
 
+/**
+ * @brief Publish one request to the worker.
+ * @param type Operation to execute.
+ * @param address First flash address used by the operation.
+ * @param data Caller-owned buffer, if required by the operation.
+ * @param length Number of bytes used by the operation.
+ * @return E_OK if accepted; otherwise E_NOT_OK.
+ * @note The mutex prevents concurrent submissions and protects the request
+ * snapshot. The caller's buffer is not copied and must remain valid.
+ */
 static STD_ReturnTypeDef fls_SubmitJob(Fls_RequestTypeDef type, uint32_t address,
                                        uint8_t *data, uint16_t length)
 {
@@ -89,6 +115,7 @@ static STD_ReturnTypeDef fls_SubmitJob(Fls_RequestTypeDef type, uint32_t address
     return E_OK;
 }
 
+/** @copydoc fls_Init */
 STD_ReturnTypeDef fls_Init(void)
 {
     memset(&Fls_Config, 0, sizeof(Fls_Config));
@@ -113,6 +140,7 @@ STD_ReturnTypeDef fls_Init(void)
     return E_OK;
 }
 
+/** @copydoc fls_StartWorker */
 STD_ReturnTypeDef fls_StartWorker(void)
 {
     static const osThreadAttr_t workerAttributes = {
@@ -141,6 +169,7 @@ STD_ReturnTypeDef fls_StartWorker(void)
     return E_OK;
 }
 
+/** @copydoc fls_GetStatus */
 FLS_StatusTypeDef fls_GetStatus(void)
 {
     FLS_StatusTypeDef state;
@@ -156,6 +185,7 @@ FLS_StatusTypeDef fls_GetStatus(void)
     return state;
 }
 
+/** @copydoc fls_GetJobResult */
 FLS_JobStatusTypeDef fls_GetJobResult(void)
 {
     FLS_JobStatusTypeDef result;
@@ -171,6 +201,7 @@ FLS_JobStatusTypeDef fls_GetJobResult(void)
     return result;
 }
 
+/** @copydoc fls_GetVersionInfo */
 STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo)
 {
     if (versionInfo == NULL || Fls_Config.State == FLS_UNINITIALIZED) {
@@ -186,6 +217,7 @@ STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo)
     return E_OK;
 }
 
+/** @copydoc fls_setMode */
 STD_ReturnTypeDef fls_setMode(uint8_t mode)
 {
     if (mode > QUAD_MODE || Fls_Config.State == FLS_UNINITIALIZED ||
@@ -210,11 +242,14 @@ STD_ReturnTypeDef fls_setMode(uint8_t mode)
     return E_OK;
 }
 
+/** @copydoc fls_Cancel_Job */
 STD_ReturnTypeDef fls_Cancel_Job(void)
 {
+    /* Accepted requests run to completion and cannot be safely interrupted. */
     return E_NOT_OK;
 }
 
+/** @copydoc fls_Read */
 STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length)
 {
     if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
@@ -223,6 +258,7 @@ STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length)
     return fls_SubmitJob(FLS_REQUEST_READ, address, data, length);
 }
 
+/** @copydoc fls_Write */
 STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length)
 {
     if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
@@ -231,6 +267,7 @@ STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length)
     return fls_SubmitJob(FLS_REQUEST_WRITE, address, data, length);
 }
 
+/** @copydoc fls_Erase */
 STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length)
 {
     if (!fls_IsRangeValid(address, length)) {
@@ -239,6 +276,7 @@ STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length)
     return fls_SubmitJob(FLS_REQUEST_ERASE, address, NULL, length);
 }
 
+/** @copydoc fls_Compare */
 STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length)
 {
     if ((length > 0U && data == NULL) || !fls_IsRangeValid(address, length)) {
@@ -247,6 +285,7 @@ STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length)
     return fls_SubmitJob(FLS_REQUEST_COMPARE, address, data, length);
 }
 
+/** @copydoc fls_BlankCheck */
 STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length)
 {
     if (!fls_IsRangeValid(address, length)) {
@@ -255,6 +294,7 @@ STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length)
     return fls_SubmitJob(FLS_REQUEST_BLANK_CHECK, address, NULL, length);
 }
 
+/** @copydoc fls_Erase_Sector */
 STD_ReturnTypeDef fls_Erase_Sector(uint32_t address)
 {
     if (!fls_IsRangeValid(address, 1U)) {
@@ -263,17 +303,34 @@ STD_ReturnTypeDef fls_Erase_Sector(uint32_t address)
     return fls_SubmitJob(FLS_REQUEST_ERASE_SECTOR, address, NULL, 0U);
 }
 
+/** @copydoc fls_Erase_Chip */
 STD_ReturnTypeDef fls_Erase_Chip(void)
 {
     return fls_SubmitJob(FLS_REQUEST_ERASE_CHIP, 0U, NULL, 0U);
 }
 
+/**
+ * @brief Synchronously read bytes through the selected backend.
+ * @param address First flash address.
+ * @param data Destination buffer.
+ * @param length Number of bytes to read.
+ * @return Backend operation result.
+ */
 static STD_ReturnTypeDef fls_ReadSync(uint32_t address, uint8_t *data,
                                       uint16_t length)
 {
     return FlashBackend.Read(address, data, length);
 }
 
+/**
+ * @brief Execute a write while preserving all other data in touched sectors.
+ * @param address First address to replace.
+ * @param data Replacement bytes.
+ * @param length Number of bytes to write.
+ * @return E_OK on complete success; otherwise E_NOT_OK.
+ * @note Each affected sector is read into RAM, patched, erased, then
+ * reprogrammed page-by-page. Fully erased pages are skipped.
+ */
 static STD_ReturnTypeDef fls_WriteSync(uint32_t address, uint8_t *data,
                                        uint16_t length)
 {
@@ -324,6 +381,12 @@ static STD_ReturnTypeDef fls_WriteSync(uint32_t address, uint8_t *data,
     return E_OK;
 }
 
+/**
+ * @brief Erase each sector intersecting a byte range.
+ * @param address First address in the requested range.
+ * @param length Number of bytes in the requested range.
+ * @return E_OK on success; otherwise E_NOT_OK.
+ */
 static STD_ReturnTypeDef fls_EraseSync(uint32_t address, uint16_t length)
 {
     uint32_t sectorAddress;
@@ -343,6 +406,13 @@ static STD_ReturnTypeDef fls_EraseSync(uint32_t address, uint16_t length)
     return E_OK;
 }
 
+/**
+ * @brief Compare flash data against a caller-provided buffer in bounded chunks.
+ * @param address First address to compare.
+ * @param data Expected bytes.
+ * @param length Number of bytes to compare.
+ * @return E_OK if all bytes match; otherwise E_NOT_OK.
+ */
 static STD_ReturnTypeDef fls_CompareSync(uint32_t address, uint8_t *data,
                                          uint16_t length)
 {
@@ -362,6 +432,12 @@ static STD_ReturnTypeDef fls_CompareSync(uint32_t address, uint8_t *data,
     return E_OK;
 }
 
+/**
+ * @brief Check a flash range for the erased value 0xFF.
+ * @param address First address to check.
+ * @param length Number of bytes to check.
+ * @return E_OK if every byte is erased; otherwise E_NOT_OK.
+ */
 static STD_ReturnTypeDef fls_BlankCheckSync(uint32_t address, uint16_t length)
 {
     uint16_t offset = 0U;
@@ -384,6 +460,11 @@ static STD_ReturnTypeDef fls_BlankCheckSync(uint32_t address, uint16_t length)
     return E_OK;
 }
 
+/**
+ * @brief Dispatch one queued request to its synchronous implementation.
+ * @param request Immutable snapshot of the pending worker request.
+ * @return E_OK on success; otherwise E_NOT_OK.
+ */
 static STD_ReturnTypeDef fls_ExecuteRequest(const Fls_RequestType *request)
 {
     switch (request->Type) {
@@ -406,6 +487,14 @@ static STD_ReturnTypeDef fls_ExecuteRequest(const Fls_RequestType *request)
     }
 }
 
+/**
+ * @brief Wait for queued operations, execute them, and publish their result.
+ * @param argument Unused CMSIS-RTOS thread argument.
+ *
+ * The worker copies the pending request while holding the state mutex, then
+ * performs blocking backend I/O without holding that mutex. It reacquires the
+ * mutex to publish the result, allowing status queries during flash activity.
+ */
 static void fls_WorkerTask(void *argument)
 {
     (void)argument;
