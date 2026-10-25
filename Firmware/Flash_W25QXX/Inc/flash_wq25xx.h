@@ -118,41 +118,76 @@ typedef struct {
     uint8_t sw_patch_version;
 } Fls_VersionInfoTypeDef;
 
+/** Initialize the driver and confirm that the connected device is a W25Q16. */
 STD_ReturnTypeDef fls_Init(void);
+/** Select normal SPI or quad mode; quad mode is unsupported by this SPI1 setup. */
 STD_ReturnTypeDef fls_setMode(uint8_t mode);
+/** Cancel the active flash operation; blocking operations cannot be cancelled. */
 STD_ReturnTypeDef fls_Cancel_Job(void);
+/** Return the current driver state. */
 FLS_StatusTypeDef fls_GetStatus(void);
+/** Return the result of the most recently completed flash job. */
 FLS_JobStatusTypeDef fls_GetJobResult(void);
+/** Copy device and driver version information to versionInfo. */
 STD_ReturnTypeDef fls_GetVersionInfo(Fls_VersionInfoTypeDef *versionInfo);
 
+/** Read length bytes from address; the range must fit in the 2 MiB device. */
 STD_ReturnTypeDef fls_Read(uint32_t address, uint8_t *data, uint16_t length);
+/**
+ * Write length bytes while preserving other bytes in every touched 4 KiB sector.
+ * Each affected sector is read to RAM, erased, and restored with the update.
+ */
 STD_ReturnTypeDef fls_Write(uint32_t address, uint8_t *data, uint16_t length);
+/** Erase every 4 KiB sector intersecting the range; surrounding data is lost. */
 STD_ReturnTypeDef fls_Erase(uint32_t address, uint16_t length);
+/** Compare flash contents with data; return E_NOT_OK on mismatch or I/O error. */
 STD_ReturnTypeDef fls_Compare(uint32_t address, uint8_t *data, uint16_t length);
+/** Check whether every byte in the range is erased (0xFF). */
 STD_ReturnTypeDef fls_BlankCheck(uint32_t address, uint16_t length);
 
+/** Erase the sector containing address and wait for completion. */
 STD_ReturnTypeDef fls_Erase_Sector(uint32_t address);
+/** Erase the entire chip and wait for completion. */
 STD_ReturnTypeDef fls_Erase_Chip(void);
+/** Suspend an active erase operation. */
 STD_ReturnTypeDef fls_Erase_Suspend(void);
+/** Resume a suspended erase operation. */
 STD_ReturnTypeDef fls_Erase_Resume(void);
+/** Enter deep power-down mode. */
 STD_ReturnTypeDef fls_PowerDown(void);
+/** Release deep power-down mode. */
 STD_ReturnTypeDef fls_ReleasePowerDown(void);
 
+/** Read the JEDEC ID and update the device information in Fls_Config. */
 STD_ReturnTypeDef fls_wq25xx_Read_JEDEC_ID(void);
+/** Read status register 1; an SPI error is reported as BUSY. */
 uint8_t fls_wq25xx_Read_Status_Register1(void);
+/** Read status register 2; an SPI error is reported as 0xFF. */
 uint8_t fls_wq25xx_Read_Status_Register2(void);
+/** Write both status registers after enabling writes. */
 STD_ReturnTypeDef fls_wq25xx_Write_Status_Register(uint8_t reg1, uint8_t reg2);
+/** Issue a sector erase at address; does not wait for erase completion. */
 STD_ReturnTypeDef fls_wq25xx_Sector_Erase(uint32_t address);
+/** Set the write-enable latch and confirm it was set. */
 STD_ReturnTypeDef fls_wq25xx_Write_Enable(void);
+/** Clear the write-enable latch. */
 STD_ReturnTypeDef fls_wq25xx_Write_Disable(void);
+/** Read raw bytes from the device without updating job state. */
 STD_ReturnTypeDef fls_wq25xx_Read_Data(uint32_t address, uint8_t *data, uint16_t length);
+/** Use the preserving high-level write operation. */
 STD_ReturnTypeDef fls_wq25xx_Write_Data(uint32_t address, uint8_t *data, uint16_t length);
+/** Read the device's 8-byte unique identifier. */
 STD_ReturnTypeDef fls_wq25xx_Read_Unique_ID(uint8_t *unique_id);
+/** Select standard single-line SPI operation. */
 STD_ReturnTypeDef fls_SetNormalMode(void);
+/** Quad SPI mode is not supported by this SPI1 driver. */
 STD_ReturnTypeDef fls_SetQuadMode(void);
+/** Check whether the device write-enable latch is set. */
 STD_ReturnTypeDef fls_wq25xx_Is_Writable(void);
 
+/** Compatibility callback; blocking SPI operations do not use HAL callbacks. */
 void fls_SPI_TransmitCompleteCallback(void);
+/** Compatibility callback; blocking SPI operations do not use HAL callbacks. */
 void fls_SPI_ReceiveCompleteCallback(void);
 
 #endif

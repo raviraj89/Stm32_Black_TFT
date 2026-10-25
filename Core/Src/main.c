@@ -554,17 +554,21 @@ void StartDefaultTask(void *argument)
 void StartBlinkTask(void *argument)
 {
   /* USER CODE BEGIN StartBlinkTask */
-  uint8_t read_buffer[13] = {0};
+  uint8_t read_buffer[15] = {0};
 
-  uint8_t data_to_write[13] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
+  uint8_t data_to_write[13] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd};
+  uint8_t data_to_write2[15] = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,0x88,0x99};
   /* Infinite loop */
   for(;;)
   {
 
-    fls_Write(0x000200, (uint8_t *)data_to_write, 13);
+    fls_Write(0x000400, (uint8_t *)data_to_write2, 15);
     osDelay(50);
-    fls_Read(0x000200, (uint8_t *)read_buffer, 13);
+    fls_Read(0x000400, (uint8_t *)read_buffer, 15);
     osDelay(50);
+    fls_Write(0x000400, (uint8_t *)data_to_write, 13);
+    osDelay(50);
+    fls_Read(0x000400, (uint8_t *)read_buffer, 15);
     LedToggle(LED2);
 	  osDelay(50);
 	  LedToggle(LED2);
