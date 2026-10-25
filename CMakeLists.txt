@@ -56,7 +56,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Src/touch.cpp
     Application/Src/util.cpp
     Core/Src/board.c
-    Firmware/Flash_W25QXX/Src/flash_wq25xx.c
+    Firmware/Flash_W25QXX/Src/flash_wq25xx.cpp
     
 )
 

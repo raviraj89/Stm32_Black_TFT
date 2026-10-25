@@ -118,6 +118,10 @@ typedef struct {
     uint8_t sw_patch_version;
 } Fls_VersionInfoTypeDef;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * Call job-submission and status APIs from an RTOS task, not an ISR. High-level
  * read/write/erase/check jobs run on the worker; only one job may be active.
@@ -206,5 +210,9 @@ STD_ReturnTypeDef fls_wq25xx_Is_Writable(void);
 void fls_SPI_TransmitCompleteCallback(void);
 /** Compatibility callback; blocking SPI operations do not use HAL callbacks. */
 void fls_SPI_ReceiveCompleteCallback(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

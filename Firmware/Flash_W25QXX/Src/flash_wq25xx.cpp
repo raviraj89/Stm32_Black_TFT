@@ -1,6 +1,6 @@
 /**
  ******************************************************************************
- * File Name        : flash_wq25xx.c
+ * File Name        : flash_wq25xx.cpp
  * Description      : FreeRTOS-worker SPI driver for 2 MiB W25Q16 serial flash
  ******************************************************************************
  */
@@ -9,7 +9,7 @@
 #include "cmsis_os.h"
 #include <string.h>
 
-extern SPI_HandleTypeDef hspi1;
+extern "C" SPI_HandleTypeDef hspi1;
 
 Fls_ConfigTypeDef Fls_Config;
 
