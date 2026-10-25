@@ -24,7 +24,8 @@
 /* USER CODE BEGIN Includes */
 #include "board.h"
 #include "app.hpp"
-#include "flash_wq25xx.h"
+#include "flash.h"
+#include "wq25xx.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -569,7 +570,7 @@ void StartBlinkTask(void *argument)
   for(;;)
   {
 
-    if (fls_Write(0x000600, data_to_write2, 15) != E_OK)
+    if (fls_Write(0x000800, data_to_write2, 15) != E_OK)
     {
       osDelay(50);
       continue;
@@ -584,7 +585,7 @@ void StartBlinkTask(void *argument)
       continue;
     }
     osDelay(50);
-    if (fls_Read(0x000600, read_buffer, 15) != E_OK)
+    if (fls_Read(0x000800, read_buffer, 15) != E_OK)
     {
       osDelay(50);
       continue;
@@ -599,7 +600,7 @@ void StartBlinkTask(void *argument)
       continue;
     }
     osDelay(50);
-    if (fls_Write(0x000600, data_to_write, 13) != E_OK)
+    if (fls_Write(0x000800, data_to_write, 13) != E_OK)
     {
       osDelay(50);
       continue;
@@ -614,7 +615,7 @@ void StartBlinkTask(void *argument)
       continue;
     }
     osDelay(50);
-    if (fls_Read(0x000600, read_buffer, 15) != E_OK)
+    if (fls_Read(0x000800, read_buffer, 15) != E_OK)
     {
       osDelay(50);
       continue;

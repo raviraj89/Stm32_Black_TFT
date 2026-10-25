@@ -56,13 +56,15 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Src/touch.cpp
     Application/Src/util.cpp
     Core/Src/board.c
-    Firmware/Flash_W25QXX/Src/flash_wq25xx.c
+    Firmware/Flash/Src/flash.c
+    Firmware/Flash_W25QXX/Src/wq25xx.c
     
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Application/Inc
+    Firmware/Flash/Inc
     Firmware/Flash_W25QXX/Inc
 )
 
